@@ -1,0 +1,268 @@
+<?xml version="1.0" encoding="utf-8"?>
+<feed xmlns="http://www.w3.org/2005/Atom">
+  <title>Course of Crazy Growth</title>
+  <subtitle>Learn of Code and Design</subtitle>
+  <link href="/atom.xml" rel="self"/>
+  
+  <link href="http://keyin.me/"/>
+  <updated>2017-03-22T15:03:22.000Z</updated>
+  <id>http://keyin.me/</id>
+  
+  <author>
+    <name>曾 根</name>
+    
+  </author>
+  
+  <generator uri="http://hexo.io/">Hexo</generator>
+  
+  <entry>
+    <title>一种自定义循环滑动组件的设计</title>
+    <link href="http://keyin.me/2017/03/16/loop-scrollview/"/>
+    <id>http://keyin.me/2017/03/16/loop-scrollview/</id>
+    <published>2017-03-16T12:27:34.000Z</published>
+    <updated>2017-03-22T15:03:22.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>自定义循环滑动组件，通过UIView采用了复用机制来显示，UIPanGestureRecognizer来实现手势的识别，同时通过CADisplayLink来完成具体的动画。可以设定滚动方向，是否连续滚动，是否自动滚动，以及各个滚动状态的回调等 ZGLoopScrollView可以通过xib文件或者代码初始化，</p>
+<a id="more"></a>
+<h1 id="前言"><a href="#前言" class="headerlink" title="前言"></a>前言</h1><p>最初实现循环滑动组件的时候，是通过使用的UIScrollView，在delegate里面改变View的位置来实现的，但是发现这样做无法再使用UIScrollView的delegate委托了，于是乎自己动手用UIView和UIPanGestureRecognizer撸了一个，顺便仿照了一下UITableView的复用机制。<br>先上效果图：<img src="./LoopScrollView.gif" alt="效果图"></p>
+<h1 id="原理模型"><a href="#原理模型" class="headerlink" title="原理模型"></a>原理模型</h1><p>循环滑动示图显示模型如下：<br><img src="./loopmodel0.png" alt="模型1"></p>
+<p>显示的部分由两部分组成：可视区和左右两侧的待显示区</p>
+<p>所需示图个数为：可视区包含View个数＋2</p>
+<p>当触发滑动事件时，一侧的待显示区的View被移除，可视区变为待显示区，另一侧将会创建新的待显示区View，如下图所示：<br><img src="./loopmodel1.png" alt="模型2"></p>
+<p>轮播示图在滚动显示时有可分为部分：</p>
+<ul>
+<li>可视区和待显示区示图的确定及其复用方式</li>
+</ul>
+<ul>
+<li>在交互过程中滑动时，可视区和待显示区示图内容和位置的确定</li>
+</ul>
+<ul>
+<li>交互结束后的动画事件（减速，回弹，分页滑动等）</li>
+</ul>
+<h1 id="示图的加载及复用机制"><a href="#示图的加载及复用机制" class="headerlink" title="示图的加载及复用机制"></a>示图的加载及复用机制</h1><p>循环滚动组件中的示图＝可视区示图＋两边待显示区的示图</p>
+<p>使用NSMutableDictionary来存储循环滚动组件中显示的示图，NSMutableSet来管理复用的示图</p>
+<p>使用scrollOffset来记录当前滚动的位移，以计算需要加载的示图</p>
+<p>使用dataSource来实现数据源委托</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div></pre></td><td class="code"><pre><div class="line">@property (nonatomic, strong) NSMutableDictionary *itemViews;</div><div class="line">@property (nonatomic, strong) NSMutableSet *itemViewPool;</div><div class="line">@property (nonatomic, assign) CGFloat scrollOffset;</div><div class="line">@property (nonatomic, weak) IBOutlet __nullable id&lt;ZGLoopScrollViewDataSource&gt; dataSource;</div></pre></td></tr></table></figure>
+<p>每当scrollOffset变化时</p>
+<ol>
+<li>计算当前需要显示哪些示图，根据scrollOffset计算出需要显示的示图序号；</li>
+<li>将itemViews中不需要的示图移除并存储的itemViewPool当中</li>
+<li>获取itemViews中不存在但是需要显示的示图，先从集合检查是否有被移除的示图，有就从itemViewPool取出返回，否则从dataSource中初始化对应位置的示图，同时使用示图序号作为key值添加到itemViews当中；</li>
+<li>根据scrollOffset调整itemViews中各个示图的位置，可以使用UIView的transform来方便的完成平移操作；</li>
+</ol>
+<p>到这里，遍已经完成了示图显示初始化的核心操作，后面的滑动手势以及动画效果，都是基于scrollOffset的改变来完成的。</p>
+<h1 id="根据滑动事件调整位置"><a href="#根据滑动事件调整位置" class="headerlink" title="根据滑动事件调整位置"></a>根据滑动事件调整位置</h1><p>滑动工过程中所做的工作主要是</p>
+<ul>
+<li><p>滑动开始时更改一些状态的标志</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div></pre></td><td class="code"><pre><div class="line">case UIGestureRecognizerStateBegan:</div><div class="line">&#123; </div><div class="line">_draging = YES;</div><div class="line">_bouncing = NO;</div><div class="line">_decelerating = NO;</div><div class="line">_scrolling = NO;</div><div class="line">_lastTranslation = - _vertical? [panGesture translationInView:self].y: [panGesture translationInView:self].x;</div><div class="line">&#125;</div></pre></td></tr></table></figure>
+<p>以免在滑动过程中对示图位置做的修改时，与未完成的动画事件所做的修改冲突，导致位置错乱。</p>
+</li>
+<li><p>滑动状态改变时</p>
+<p>记录每次手势事件触发时的位移大小和方向，然后根据是否循环滚动(loopEnabled)，是否边界回弹      (loopEnabled)来修改scrollOffset的大小，最后从新加载需要显示的示图，和调整位置。</p>
+</li>
+<li><p>滑动手势结束时</p>
+<p>纪录当前滑动手势速度大小和方向，然后启动滑动动画，做减速处理等动画操作。</p>
+</li>
+</ul>
+<h1 id="滑动动画事件"><a href="#滑动动画事件" class="headerlink" title="滑动动画事件"></a>滑动动画事件</h1><p>滑动手势结束后的减速、回弹等动画都是采用CADisplayLink，根据屏幕刷新频率来不断的从新加载需要显示的示图，调整位置<br><figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div></pre></td><td class="code"><pre><div class="line">-(void)startScrollAnimation&#123;</div><div class="line">    if(_displayLink == nil)&#123;</div><div class="line">        self.displayLink=[CADisplayLink displayLinkWithTarget:self selector:@selector(scrollAnimation)];</div><div class="line">        [_displayLink addToRunLoop:[NSRunLoop mainRunLoop] forMode:NSDefaultRunLoopMode];</div><div class="line">    &#125;</div><div class="line">&#125;</div></pre></td></tr></table></figure></p>
+<p>其中减速动画，是根据手势结束时记录的速度，结合固定的动画时间来做匀减速直线运动；</p>
+<p>回弹效果动画，是根据当前和最后的scrollOffset差值作为位移距离，结合固定的动画时间来做匀加速直线运动。</p>
+<p>运动位置都是一些基本的物理知识做的计算，就不再用代码一一罗列，有兴趣可以<a href="https://github.com/Droid43/ZGLoopScrollViewDemo" target="_blank" rel="external">下载源码查看</a> 。</p>
+<p>到此，循环滑动组件的设计所包含的最基本内容已经完成。</p>
+<h1 id="其他内容"><a href="#其他内容" class="headerlink" title="其他内容"></a>其他内容</h1><ul>
+<li>水平与垂直滚动两种模式，通过vertical属性确定。在两种模式下，scrollOffset，手势的位移、速度，动画效果，以及示图的位置计算分别与之对应；</li>
+<li>为了不因clipsToBounds属性的设置导致待显示区的示图被显示出来，组件内部添加了容器UIView contentView，重写了layoutSubviews方法，对contentView的frame做出了修正；</li>
+<li>仿照UIScrollView，通过delegate实现各个滑动状态的委托；</li>
+<li>通过NSTimer实现自动滚动</li>
+</ul>
+<h1 id="小结"><a href="#小结" class="headerlink" title="小结"></a>小结</h1><p>本文主要分析了循环滚动示图的实现过程，同时通过UIPanGestureRecognizer和CADisplayLink，采用UIView复用的方式对其进行了实践。</p>
+<p>具体源码和使用范例可以在我的GitHub主页下载 <a href="https://github.com/Droid43/ZGLoopScrollViewDemo" target="_blank" rel="external">下载Demo查看</a> </p>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;自定义循环滑动组件，通过UIView采用了复用机制来显示，UIPanGestureRecognizer来实现手势的识别，同时通过CADisplayLink来完成具体的动画。可以设定滚动方向，是否连续滚动，是否自动滚动，以及各个滚动状态的回调等 ZGLoopScrollView可以通过xib文件或者代码初始化，&lt;/p&gt;
+    
+    </summary>
+    
+    
+      <category term="iOS" scheme="http://keyin.me/tags/iOS/"/>
+    
+      <category term="UI动画" scheme="http://keyin.me/tags/UI%E5%8A%A8%E7%94%BB/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>alihotfix_learn</title>
+    <link href="http://keyin.me/2017/03/14/alihotfix-learn/"/>
+    <id>http://keyin.me/2017/03/14/alihotfix-learn/</id>
+    <published>2017-03-14T13:36:27.000Z</published>
+    <updated>2017-03-23T12:03:16.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>关于AliHotFix热修复的学习总结<br><a id="more"></a></p>
+<h1 id="问题背景"><a href="#问题背景" class="headerlink" title="问题背景"></a>问题背景</h1><p><code> </code>原生应用打包在App Store发布苹果公司的审核周期过长(大概一到三天，时间比较看人品)，在应用由于某些原因出现影响用户使用的重大bug时，无法及时解决线上问题。</p>
+<h2 id="AliHotFix原理简述"><a href="#AliHotFix原理简述" class="headerlink" title="AliHotFix原理简述"></a>AliHotFix原理简述</h2><p>AliHotFix通过JavaScript修复iOS 其原理与JSPath的实现原理一致，都是依赖依赖系统javascriptcore,framework系统框架通过JavaScript语言使用Objective-C的原生代码，使脚本语言可以在App中执行。</p>
+<ul>
+<li><p>关于OC的动态特性</p>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div></pre></td><td class="code"><pre><div class="line">TestClass *test = [[TestClass alloc] init];</div><div class="line">test.name = @&quot;&quot;;</div><div class="line">[test medoth];</div></pre></td></tr></table></figure>
+<img src="http://www.plantuml.com/plantuml/svg/AyxEp2j8B4hCLGX8B2h9JCuiICmh2KXCISdCIrSmCk0gXiixvLV0n0qDk9BoAnIK_9EoKfDBCijITPsLk0eG-XLUx9_mOc7FazsBdozeH948TlL1uJzjt_jiwePdFUql9tLmfUQbA03DvU92rgwWQmVIfM2bK99QNAANbvYRgc2huA2an0KI1KhwbvO09VDBIxWWZl9AB4j4TOrJVf8Xke0Hp3O0">
+</li>
+</ul>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;关于AliHotFix热修复的学习总结&lt;br&gt;
+    
+    </summary>
+    
+      <category term="iOS" scheme="http://keyin.me/categories/iOS/"/>
+    
+      <category term="JS热修复" scheme="http://keyin.me/categories/iOS/JS%E7%83%AD%E4%BF%AE%E5%A4%8D/"/>
+    
+    
+      <category term="iOS" scheme="http://keyin.me/tags/iOS/"/>
+    
+      <category term="热修复" scheme="http://keyin.me/tags/%E7%83%AD%E4%BF%AE%E5%A4%8D/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>Article Template</title>
+    <link href="http://keyin.me/2017/03/14/article-template/"/>
+    <id>http://keyin.me/2017/03/14/article-template/</id>
+    <published>2017-03-13T16:00:00.000Z</published>
+    <updated>2017-03-14T13:03:32.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>hexo框架下使用markdown写作大纲的通用模版</p>
+<a id="more"></a>
+<h1 id="关于✕✕✕问题的解决与分析"><a href="#关于✕✕✕问题的解决与分析" class="headerlink" title="关于✕✕✕问题的解决与分析"></a>关于✕✕✕问题的解决与分析</h1><h2 id="一-问题简述与相关原理"><a href="#一-问题简述与相关原理" class="headerlink" title="一. 问题简述与相关原理"></a>一. 问题简述与相关原理</h2><ul>
+<li><h3 id="问题描述"><a href="#问题描述" class="headerlink" title="问题描述"></a>问题描述</h3></li>
+<li><h3 id="相关背景知识"><a href="#相关背景知识" class="headerlink" title="相关背景知识"></a>相关背景知识</h3></li>
+</ul>
+<h2 id="二-解决方案与流程"><a href="#二-解决方案与流程" class="headerlink" title="二. 解决方案与流程"></a>二. 解决方案与流程</h2><ul>
+<li><h3 id="问题解决思路"><a href="#问题解决思路" class="headerlink" title="问题解决思路"></a>问题解决思路</h3></li>
+<li><h3 id="思维导图"><a href="#思维导图" class="headerlink" title="思维导图"></a>思维导图</h3><img src="http://www.plantuml.com/plantuml/svg/AyxEp2j8B4hCLGX8B2h9JCuiICmh2KXCISdCIrSmCk0gXiixvLV0n0qDk9BoAnIKtFBp3PMu2X0Q5HnpCfDJ3J65ZBXIyr8KW9hW6erGDJhb9ncY2o0qGOnLqBK3grEmKiX8pSd9HnBsBoq1YkQNbW00">
+<h2 id="三-方案实现"><a href="#三-方案实现" class="headerlink" title="三. 方案实现"></a>三. 方案实现</h2></li>
+</ul>
+<ul>
+<li><h3 id="流程图"><a href="#流程图" class="headerlink" title="流程图"></a>流程图</h3><img src="http://www.plantuml.com/plantuml/svg/POr12i9034NtFKMM5d7keFG6Ue4u2KFiD9KcbOBqxbOThEZVvNt-onLZYucX7rBGonX8BECvZ5s-Lx0aPZI34vlluKsUsHrz44sWsF47RaKTX5xtNFsi3y2Jir9n_Qk8BQwg0XDxi_1DlJQtNWYiyAzjNVxE3m00">
+</li>
+<li><h3 id="具体实现"><a href="#具体实现" class="headerlink" title="具体实现"></a>具体实现</h3></li>
+<li><h3 id="源码地址"><a href="#源码地址" class="headerlink" title="源码地址"></a>源码地址</h3><p><a href="https://Droid43.github.io" target="_blank" rel="external">Demo</a></p>
+</li>
+</ul>
+<h2 id="四-总结"><a href="#四-总结" class="headerlink" title="四. 总结"></a>四. 总结</h2>]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;hexo框架下使用markdown写作大纲的通用模版&lt;/p&gt;
+    
+    </summary>
+    
+      <category term="markdown" scheme="http://keyin.me/categories/markdown/"/>
+    
+    
+      <category term="markdown" scheme="http://keyin.me/tags/markdown/"/>
+    
+  </entry>
+  
+  <entry>
+    <title>ALAssetCocoaHTTPServer</title>
+    <link href="http://keyin.me/2017/03/10/README/"/>
+    <id>http://keyin.me/2017/03/10/README/</id>
+    <published>2017-03-09T16:00:00.000Z</published>
+    <updated>2017-03-13T10:22:53.000Z</updated>
+    
+    <content type="html"><![CDATA[<p>基于CocoaHTTPServer  iOS HTTP 服务器的相册资源共享服务框架</p>
+<a id="more"></a>
+<h1 id="说明及注意事项"><a href="#说明及注意事项" class="headerlink" title="说明及注意事项"></a>说明及注意事项</h1><ul>
+<li><em>FFmpeg Version 2.8</em></li>
+<li><em>FFmpeg</em> 仅编译部必需的功能</li>
+<li><em>FFmpeg</em> 需要导入的动态库<code>libz.tbd</code>,<code>libiconv.tbd</code>,<code>libbz2.tbd</code></li>
+<li><em>iOS 10 +</em> 需要添加相册访问权限，否则无法访问相册资源</li>
+<li><em>iOS 9 +</em> 使用<em>HTTP请求</em>需要在<em>Info.plist</em>中添加 <em>NSAllowsArbitraryLoads</em> 为<em>YES</em></li>
+<li>若需要媒体共享服务被访问期间可后台运行，需要在 <em>Info.plist</em>中添加 <em>Required background modes</em> 添加条目选择<em>App plays audio or streams audio/video using AirPlay</em></li>
+<li>必需在同一局域网下方可访问</li>
+</ul>
+<h1 id="如何使用"><a href="#如何使用" class="headerlink" title="如何使用"></a>如何使用</h1><h2 id="1-CocoaPods集成"><a href="#1-CocoaPods集成" class="headerlink" title="1. CocoaPods集成"></a>1. CocoaPods集成</h2><figure class="highlight ruby"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div></pre></td><td class="code"><pre><div class="line">platform <span class="symbol">:ios</span>, <span class="string">'7.0'</span></div><div class="line"></div><div class="line">target <span class="string">'ALAssetCocoaHTTPServerDemo'</span> <span class="keyword">do</span></div><div class="line">pod <span class="string">'ALAssetCocoaHTTPServer'</span>,<span class="symbol">:svn</span> =&gt;<span class="string">"http://172.20.3.159/svn/Android/App/ScreensInteract3/sourcecode/trunk/IOS-901/MultiScreenFramework/ALAssetCocoaHTTPServer/"</span>, <span class="symbol">:tag</span> =&gt;<span class="string">"0.0.2"</span></div><div class="line"><span class="keyword">end</span></div></pre></td></tr></table></figure>
+<h2 id="2-使用范例"><a href="#2-使用范例" class="headerlink" title="2. 使用范例"></a>2. 使用范例</h2><figure class="highlight objectivec"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div><div class="line">9</div><div class="line">10</div></pre></td><td class="code"><pre><div class="line"></div><div class="line">HTTPServer *httpServer = [[HTTPServer alloc] init];</div><div class="line">[httpServer setType:<span class="string">@"_http._tcp."</span>];</div><div class="line">[httpServer setDocumentRoot:<span class="built_in">NSHomeDirectory</span>()];</div><div class="line">[httpServer setPort:<span class="number">12345</span>];</div><div class="line"><span class="built_in">NSError</span> *error;</div><div class="line"><span class="keyword">if</span>([httpServer start:&amp;error])</div><div class="line">    <span class="built_in">NSLog</span>(<span class="string">@"Started HTTP Server on http://%@:%hu"</span>,  [httpServer domain], [httpServer listeningPort]);</div><div class="line"><span class="keyword">else</span></div><div class="line">    <span class="built_in">NSLog</span>(<span class="string">@"Error starting HTTP Server: %@"</span>, error);</div></pre></td></tr></table></figure>
+<h2 id="3-打开调试打印"><a href="#3-打开调试打印" class="headerlink" title="3. 打开调试打印"></a>3. 打开调试打印</h2><figure class="highlight objectivec"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div><div class="line">9</div><div class="line">10</div></pre></td><td class="code"><pre><div class="line"><span class="meta">#import <span class="meta-string">"DDTTYLogger.h"</span></span></div><div class="line"><span class="class"><span class="keyword">@interface</span> <span class="title">AppDelegate</span> ()</span></div><div class="line"><span class="keyword">@end</span></div><div class="line"><span class="class"><span class="keyword">@implementation</span> <span class="title">AppDelegate</span></span></div><div class="line">  </div><div class="line">- (<span class="built_in">BOOL</span>)application:(<span class="built_in">UIApplication</span> *)application didFinishLaunchingWithOptions:(<span class="built_in">NSDictionary</span> *)launchOptions &#123;</div><div class="line">    [DDLog addLogger:[DDTTYLogger sharedInstance]];</div><div class="line">    [[DDTTYLogger sharedInstance] setColorsEnabled:<span class="literal">YES</span>];</div><div class="line">&#125;</div><div class="line"><span class="keyword">@end</span></div></pre></td></tr></table></figure>
+<h2 id="4-请求url样式"><a href="#4-请求url样式" class="headerlink" title="4. 请求url样式"></a>4. 请求url样式</h2><p>若当前IP为192.168.1.100</p>
+<ul>
+<li><p>tag:0.0.2版</p>
+<blockquote>
+<p>系统视频资源<em>url：assets-library://asset/asset.mp4?id=8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE&amp;ext=mp4</em></p>
+<ol>
+<li><p>0.0.1版 <em>url</em>： <del><em><a href="http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4" target="_blank" rel="external">http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4</a></em></del>不可用</p>
+</li>
+<li><p>默认访问 <em>url</em>为：<a href="http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4.m3u8" target="_blank" rel="external">http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4.m3u8</a> 若播放器支持，可根据当前网络带宽多流适配，访问合适分辨率的视频资源</p>
+</li>
+<li><p>若访问 <em>url</em>为：<a href="http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4.low.m3u8" target="_blank" rel="external">http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4.<del><strong>type</strong></del>.m3u8</a>。</p>
+<p>type表示画质的高低可为：low、 mid、high、super，其中low表示画质最差，所需网络带宽最小，压缩程度最大；super表示原有画质，所需网络带宽最大，不进行压缩处理。</p>
+</li>
+</ol>
+<p>图片<em>url</em>创建方式不变</p>
+</blockquote>
+</li>
+<li><p>tag:0.0.1版</p>
+<blockquote>
+<p>系统视频资源<em>url：assets-library://asset/asset.mp4?id=8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE&amp;ext=mp4</em><br>则访问 <em>url</em>为：<em><a href="http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4" target="_blank" rel="external">http://192.168.1.100:12345/8F308A6B-EE6F-471B-B2CD-DB6CB625C9BE.mp4</a></em></p>
+<p>系统图片资源<em>url：assets-library://asset/asset.PNG?id=4091A22F-3BA9-42F6-85C6-7B0992A75457&amp;ext=PNG</em><br>则访问<em>url</em>为：<em><a href="http://192.168.1.100:12345/4091A22F-3BA9-42F6-85C6-7B0992A75457.PNG" target="_blank" rel="external">http://192.168.1.100:12345/4091A22F-3BA9-42F6-85C6-7B0992A75457.PNG</a></em></p>
+</blockquote>
+</li>
+</ul>
+<h1 id="实现原理"><a href="#实现原理" class="headerlink" title="实现原理"></a>实现原理</h1><h2 id="1-图片文件请求"><a href="#1-图片文件请求" class="headerlink" title="1.图片文件请求"></a>1.图片文件请求</h2><blockquote>
+<p>图片文件的获取比较简单，直接通过<em>url</em>定位到系统相册资源后通过调用系统接口获取对应数据</p>
+</blockquote>
+<h2 id="2-视频请求流程简介"><a href="#2-视频请求流程简介" class="headerlink" title="2.视频请求流程简介"></a>2.视频请求流程简介</h2><figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div><div class="line">9</div><div class="line">10</div></pre></td><td class="code"><pre><div class="line">st=&gt;start: 客户端</div><div class="line">io=&gt;inputoutput: verification</div><div class="line">op=&gt;operation: Your Operation</div><div class="line">cond=&gt;condition: Yes or No?</div><div class="line">sub=&gt;subroutine: Your Subroutine</div><div class="line">e=&gt;end</div><div class="line"></div><div class="line">st-&gt;io-&gt;op-&gt;cond</div><div class="line">cond(yes)-&gt;e</div><div class="line">cond(no)-&gt;sub-&gt;io</div></pre></td></tr></table></figure>
+<figure class="highlight plain"><table><tr><td class="gutter"><pre><div class="line">1</div><div class="line">2</div><div class="line">3</div><div class="line">4</div><div class="line">5</div><div class="line">6</div><div class="line">7</div><div class="line">8</div><div class="line">9</div><div class="line">10</div><div class="line">11</div></pre></td><td class="code"><pre><div class="line">sequenceDiagram</div><div class="line">客户端-&gt;CocoaHTTPServer:  访问m3u8文件   </div><div class="line">CocoaHTTPServer-&gt;m3u8生成器: 请求m3u8文件</div><div class="line">note right of m3u8生成器:根据请求媒体\n文件及分片长度\n生成m3u8文件</div><div class="line">m3u8生成器--&gt;CocoaHTTPServer:返回生成文件</div><div class="line">CocoaHTTPServer--&gt;客户端:返回m3u8文件</div><div class="line">客户端-&gt;CocoaHTTPServer:  请求ts文件   </div><div class="line">CocoaHTTPServer-&gt;ts文件管理: 请ts视频文件</div><div class="line">note right of ts文件管理:获取本地沙盒目录下的\nts缓存文件或根据请求\nurl临时转码，切片，\n封装而生成，同时删除\n失效的ts临时文件</div><div class="line">ts文件管理--&gt;CocoaHTTPServer:返回获取文件</div><div class="line">CocoaHTTPServer--&gt;客户端:返回ts视频文件</div></pre></td></tr></table></figure>
+<p><em>iOS</em>文件只能访问沙盒路径内的资源，在通过将<em>http</em>请求相册视频资源文件时，可通过系统接口来获取； 为了解决系统部分<em>mov</em>格式视频部分平台播放器解码不支持的问题，在获取资源文件后将原文件转码为了<em>mp4</em>格式； 为了使转码后的文件不占用太多的内存空间，转码时根据请求文件的大小，只将部分请求的文件转换为<em>mp4</em>格式；</p>
+<ul>
+<li><p>获取<em>m3u8</em>文件</p>
+<blockquote>
+<p>通过<em>url</em>定位到系统相册资源</p>
+<p>根据资源文件时长计算出分片策略</p>
+<p>文件信息，分片时长创建<em>ts</em>切片对应<em>url</em></p>
+<p>生成相应<em>m3u8</em>文件</p>
+</blockquote>
+</li>
+<li><p>获取<em>ts</em>切片资源</p>
+<blockquote>
+<p>播放器解析<em>m3u8</em>文件解析获取<em>ts</em>分片视频资源<em>url</em></p>
+</blockquote>
+</li>
+<li><p>生成<em>ts</em>切片</p>
+<blockquote>
+<p>根据<em>url</em>获取视频文件信息，切片时长和序列号</p>
+<p>通过系统接口获取到对应时间段的视频切片数据</p>
+<p>若为<em>mov</em>格式，则将其转换为<em>mp4</em>格式</p>
+<p>使用<em>FFmpeg</em>将<em>mp4</em>格式切片数据转换为<em>ts</em>封装格式</p>
+</blockquote>
+</li>
+</ul>
+]]></content>
+    
+    <summary type="html">
+    
+      &lt;p&gt;基于CocoaHTTPServer  iOS HTTP 服务器的相册资源共享服务框架&lt;/p&gt;
+    
+    </summary>
+    
+      <category term="iOS" scheme="http://keyin.me/categories/iOS/"/>
+    
+      <category term="流媒体" scheme="http://keyin.me/categories/iOS/%E6%B5%81%E5%AA%92%E4%BD%93/"/>
+    
+      <category term="ffmpeg" scheme="http://keyin.me/categories/iOS/%E6%B5%81%E5%AA%92%E4%BD%93/ffmpeg/"/>
+    
+    
+      <category term="http" scheme="http://keyin.me/tags/http/"/>
+    
+      <category term="iOS" scheme="http://keyin.me/tags/iOS/"/>
+    
+      <category term="ffmpeg" scheme="http://keyin.me/tags/ffmpeg/"/>
+    
+  </entry>
+  
+</feed>
